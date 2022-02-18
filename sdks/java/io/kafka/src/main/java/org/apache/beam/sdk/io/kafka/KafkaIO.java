@@ -55,6 +55,7 @@ import org.apache.beam.sdk.expansion.ExternalTransformRegistrar;
 import org.apache.beam.sdk.io.Read.Unbounded;
 import org.apache.beam.sdk.io.UnboundedSource;
 import org.apache.beam.sdk.io.UnboundedSource.CheckpointMark;
+import org.apache.beam.sdk.io.kafka.KafkaIOReadImplementationCompatibility.KafkaIOReadImplementationCompatibilityType;
 import org.apache.beam.sdk.options.ExperimentalOptions;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.ValueProvider;
@@ -1290,23 +1291,34 @@ public class KafkaIO {
       Coder<K> keyCoder = getKeyCoder(coderRegistry);
       Coder<V> valueCoder = getValueCoder(coderRegistry);
 
+      final KafkaIOReadImplementationCompatibilityType allowedTypes =
+          KafkaIOReadImplementationCompatibility.getAllowedType(this);
+
       // For read from unbounded in a bounded manner, we actually are not going through Read or SDF.
       if (ExperimentalOptions.hasExperiment(
               input.getPipeline().getOptions(), "beam_fn_api_use_deprecated_read")
           || ExperimentalOptions.hasExperiment(
               input.getPipeline().getOptions(), "use_deprecated_read")
-          || getMaxNumRecords() < Long.MAX_VALUE
-          || getMaxReadTime() != null
-          || runnerRequiresLegacyRead(input.getPipeline().getOptions())) {
+          || allowedTypes == KafkaIOReadImplementationCompatibilityType.ONLY_LEGACY
+          || (allowedTypes == KafkaIOReadImplementationCompatibilityType.BOTH
+              && runnerPrefersLegacyRead(input.getPipeline().getOptions()))) {
         checkArgument(
-            getStopReadTime() == null,
-            "stopReadTime is set but it is only supported via SDF implementation.");
+            allowedTypes != KafkaIOReadImplementationCompatibilityType.ONLY_SDF,
+            "The Kafka read has been configured with SDF-only configuration!");
+        // TODO bnemeth list problematic properties in log + move to constructor to include every
+        // codepath
         return input.apply(new ReadFromKafkaViaUnbounded<>(this, keyCoder, valueCoder));
+      } else {
+        checkArgument(
+            allowedTypes != KafkaIOReadImplementationCompatibilityType.ONLY_LEGACY,
+            "The Kafka read has been configured with legacy-only configuration!");
+        // TODO bnemeth list problematic properties in log + move to constructor to include every
+        // codepath
+        return input.apply(new ReadFromKafkaViaSDF<>(this, keyCoder, valueCoder));
       }
-      return input.apply(new ReadFromKafkaViaSDF<>(this, keyCoder, valueCoder));
     }
 
-    private boolean runnerRequiresLegacyRead(PipelineOptions options) {
+    private boolean runnerPrefersLegacyRead(PipelineOptions options) {
       // Only Dataflow runner requires sdf read at this moment. For other non-portable runners, if
       // it doesn't specify use_sdf_read, it will use legacy read regarding to performance concern.
       // TODO(BEAM-10670): Remove this special check when we address performance issue.

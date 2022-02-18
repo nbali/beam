@@ -521,7 +521,7 @@ public class DataflowRunner extends PipelineRunner<DataflowPipelineJob> {
                 new StreamingPubsubIOWriteOverrideFactory(this)));
       }
 
-      overridesBuilder.add(KafkaIO.Read.KAFKA_READ_OVERRIDE);
+      // TODO bnemeth https://github.com/apache/beam/pull/16888 might cover this
 
       overridesBuilder.add(
           PTransformOverride.of(
